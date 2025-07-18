@@ -1,0 +1,158 @@
+# Verifica e instala módulo SqlServer
+if (-not (Get-Module -ListAvailable -Name SqlServer)) {
+    Write-Host "📦 Módulo 'SqlServer' não encontrado. Instalando..."
+    try {
+        Install-Module -Name SqlServer -Force -Scope CurrentUser -ErrorAction Stop -AllowClobber
+        Write-Host "✅ Módulo 'SqlServer' instalado com sucesso."
+    } catch {
+        Write-Host "❌ Falha ao instalar o módulo 'SqlServer': $($_.Exception.Message)"
+        return
+    }
+}
+
+try {
+    Import-Module SqlServer -ErrorAction Stop
+    Write-Host "📥 Módulo 'SqlServer' carregado com sucesso.`n"
+} catch {
+    Write-Host "❌ Erro ao importar o módulo 'SqlServer': $($_.Exception.Message)"
+    return
+}
+
+function GetSqlServerProductKey {
+    param ([string]$InstanceName)
+
+    $localmachine = [Microsoft.Win32.RegistryHive]::LocalMachine
+    $defaultview  = [Microsoft.Win32.RegistryView]::Default
+    $reg           = [Microsoft.Win32.RegistryKey]::OpenBaseKey($localmachine, $defaultview)
+
+    $key = "SOFTWARE\\Microsoft\\Microsoft SQL Server\\$InstanceName\\Setup"
+    try {
+        $encodedData = $reg.OpenSubKey($key).GetValue("DigitalProductID")
+        $reg.Close()
+
+        if (-not $encodedData) {
+            Write-Host "❌ DigitalProductID não encontrada para a instância: $InstanceName"
+            return
+        }
+
+        $binArray    = $encodedData[0..66]
+        $charsArray  = "B","C","D","F","G","H","J","K","M","P","Q","R","T","V","W","X","Y","2","3","4","6","7","8","9"
+        $productKey  = ""
+
+        for ($i = 24; $i -ge 0; $i--) {
+            $k = 0
+            for ($j = 14; $j -ge 0; $j--) {
+                $k = $k * 256 -bxor $binArray[$j]
+                $binArray[$j] = [math]::truncate($k / 24)
+                $k = $k % 24
+            }
+            $productKey = $charsArray[$k] + $productKey
+            if (($i % 5 -eq 0) -and ($i -ne 0)) {
+                $productKey = "-" + $productKey
+            }
+        }
+
+        Write-Host "🔑 Chave do Produto: $productKey"
+    } catch {
+        Write-Host "⚠️ Erro ao acessar o registro ou processar a chave para $InstanceName"
+    }
+}
+
+function Get-AllSQLServerInfo {
+    Write-Host "🔍 Iniciando varredura de instâncias SQL Server instaladas...`n"
+
+    $instances = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server' |
+                 Select-Object -ExpandProperty InstalledInstances
+
+    if (-not $instances) {
+        Write-Host "❌ Nenhuma instância SQL Server encontrada neste servidor."
+        return
+    }
+
+    foreach ($instance in $instances) {
+        $instanceName = if ($instance -eq "MSSQLSERVER") { "localhost" } else { "localhost\$instance" }
+        Write-Host "`n==============================="
+        Write-Host "📌 Instância: $instanceName"
+        Write-Host "==============================="
+
+        $query = @"
+SELECT
+    SERVERPROPERTY('MachineName')            AS MachineName,
+    SERVERPROPERTY('ServerName')             AS ServerName,
+    SERVERPROPERTY('InstanceName')           AS InstanceName,
+    SERVERPROPERTY('Edition')                AS Edition,
+    SERVERPROPERTY('ProductVersion')         AS ProductVersion,
+    SERVERPROPERTY('ProductLevel')           AS ProductLevel,
+    SERVERPROPERTY('IsIntegratedSecurityOnly') AS IsIntegratedSecurityOnly
+"@
+
+        try {
+            $result = Invoke-Sqlcmd `
+                -ServerInstance         $instanceName `
+                -Query                  $query `
+                -TrustServerCertificate `
+                -ErrorAction            Stop
+
+            $result | Format-List
+        } catch {
+            Write-Host ("❌ Erro ao conectar à instância {0}: {1}" -f $instanceName, $_.Exception.Message)
+            continue
+        }
+
+        # Registro de instalação
+        $setupKeyPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instance\Setup"
+        if (Test-Path $setupKeyPath) {
+            $regInfo = Get-ItemProperty -Path $setupKeyPath
+            Write-Host "📁 Caminho de Instalação: $($regInfo.SQLPath)"
+            Write-Host "📅 Data de Instalação : $($regInfo.InstallDate)"
+        }
+
+        # Serviço Windows
+        $serviceName = if ($instance -eq "MSSQLSERVER") { "MSSQLSERVER" } else { "MSSQL`$$instance" }
+        try {
+            $service = Get-Service -Name $serviceName -ErrorAction Stop
+            Write-Host "⚙️ Serviço       : $($service.DisplayName)"
+            Write-Host "🔄 Status        : $($service.Status)"
+            Write-Host "🕓 Inicialização : $($service.StartType)"
+        } catch {
+            Write-Host "⚠️ Serviço $serviceName não encontrado ou inacessível."
+        }
+
+        # Edição
+        switch ($result.Edition) {
+            "Express Edition"    { Write-Host "🆓 Edição gratuita — não requer ativação." }
+            "Developer Edition"  { Write-Host "🧪 Edição para desenvolvimento — sem expiração." }
+            default              { Write-Host "✅ Edição comercial — verifique o contrato de licença." }
+        }
+
+        # Tamanho do diretório SQL
+        if ($regInfo.SQLPath -and (Test-Path $regInfo.SQLPath)) {
+            try {
+                $size   = (Get-ChildItem -Recurse -Path $regInfo.SQLPath -ErrorAction SilentlyContinue |
+                           Measure-Object -Property Length -Sum).Sum
+                $sizeGB = [Math]::Round($size / 1GB, 2)
+                Write-Host "💽 Tamanho Aproximado do Diretório SQL: $sizeGB GB"
+            } catch {
+                Write-Host "⚠️ Falha ao calcular o tamanho do diretório."
+            }
+        }
+
+        # Decodifica a chave do produto
+        try {
+            $sqlKeyMap = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
+            $keyName   = $sqlKeyMap."$instance"
+            if ($keyName) {
+                GetSqlServerProductKey -InstanceName $keyName
+            } else {
+                Write-Host "⚠️ Registro de mapeamento de instância não encontrado para $instance."
+            }
+        } catch {
+            Write-Host "⚠️ Erro ao recuperar nome de registro para $instance."
+        }
+    }
+
+    Write-Host "`n✅ Varredura concluída."
+}
+
+# Executa a varredura
+Get-AllSQLServerInfo
