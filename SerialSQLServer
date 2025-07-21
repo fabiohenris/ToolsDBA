@@ -5,7 +5,7 @@
 # Desenvolvido : Fabio Henrique da Silva
 # LinkedIn   : https://www.linkedin.com/in/fabio-henriques/
 
-# Liberando a execução , em algumas S.O esta bloqueado. 
+# Libera temporariamente a execução de scripts para instância
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 # Verifica e instala módulo SqlServer
@@ -59,7 +59,8 @@ function Get-HardwareInfo {
         $sizeGB      = [Math]::Round($d.Size / 1GB, 2)
         $freeGB      = [Math]::Round($d.FreeSpace / 1GB, 2)
         $percentFree = [Math]::Round(($d.FreeSpace / $d.Size) * 100, 2)
-        Write-Host "🗄️ Disco $($d.DeviceID): $freeGB GB livre de $sizeGB GB ($percentFree% livre)"
+        $volName     = if ($d.VolumeName) { $d.VolumeName } else { 'Sem rótulo' }
+        Write-Host "🗄️ Disco $($d.DeviceID) - Nome: $volName - $freeGB GB livre de $sizeGB GB ($percentFree% livre)"
     }
 
     # Placas de Rede
