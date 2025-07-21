@@ -28,19 +28,36 @@ try {
     return
 }
 
+# Função para decodificar a chave de produto do Windows
+function Get-WindowsProductKey {
+    $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+    $DigitalProductId = (Get-ItemProperty -Path $regPath -Name 'DigitalProductId').DigitalProductId
+    $chars = "BCDFGHJKMPQRTVWXY2346789"
+    $productKey = ''
+    for ($i = 24; $i -ge 0; $i--) {
+        $current = 0
+        for ($j = 14; $j -ge 0; $j--) {
+            $current = ($current * 256) -bxor $DigitalProductId[$j + 52]
+            $DigitalProductId[$j + 52] = [math]::Floor($current / 24)
+            $current = $current % 24
+        }
+        $productKey = $chars[$current] + $productKey
+        if (($i % 5 -eq 0) -and ($i -ne 0)) { $productKey = '-' + $productKey }
+    }
+    return $productKey
+}
+
 # Função para coletar informações de hardware do servidor
 function Get-HardwareInfo {
     Write-Host "🖥️ Informações de Hardware do Servidor`n"
 
-    # Sistema Operacional
+    # Sistema Operacional & Chave
     $os = Get-CimInstance Win32_OperatingSystem
     $installDateRaw = $os.InstallDate
-    try {
-        $installDate = [System.Management.ManagementDateTimeConverter]::ToDateTime($installDateRaw)
-    } catch {
-        $installDate = $installDateRaw
-    }
+    try { $installDate = [System.Management.ManagementDateTimeConverter]::ToDateTime($installDateRaw) } catch { $installDate = $installDateRaw }
+    $osKey = Get-WindowsProductKey
     Write-Host "🛡️ SO           : $($os.Caption) (Versão $($os.Version)) - Instalado em: $installDate"
+    Write-Host "🔑 Chave S.O.    : $osKey`n"
 
     # CPU
     $cpus = Get-CimInstance Win32_Processor
@@ -51,7 +68,7 @@ function Get-HardwareInfo {
     # Memória Física
     $cs = Get-CimInstance Win32_ComputerSystem
     $totalMemGB = [Math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
-    Write-Host "💾 Memória Total: $totalMemGB GB"
+    Write-Host "💾 Memória Total: $totalMemGB GB`n"
 
     # Discos (DriveType 3 = Discos Fixos)
     $drives = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
@@ -62,6 +79,7 @@ function Get-HardwareInfo {
         $volName     = if ($d.VolumeName) { $d.VolumeName } else { 'Sem rótulo' }
         Write-Host "🗄️ Disco $($d.DeviceID) - Nome: $volName - $freeGB GB livre de $sizeGB GB ($percentFree% livre)"
     }
+    Write-Host ""  # Linha em branco
 
     # Placas de Rede
     $nics = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled }
@@ -105,7 +123,7 @@ function Get-SqlServerProductKey {
             if (($i % 5 -eq 0) -and ($i -ne 0)) { $productKey = "-" + $productKey }
         }
 
-        Write-Host "🔑 Chave do Produto: $productKey"
+        Write-Host "🔑 Chave do Produto SQL: $productKey"
     } catch {
         Write-Host "⚠️ Erro ao decodificar a chave para ${InstanceName}: $($_.Exception.Message)"
     }
@@ -125,7 +143,7 @@ function Get-AllSQLServerInfo {
         $instanceName = if ($instance -eq 'MSSQLSERVER') { 'localhost' } else { "localhost\$instance" }
         Write-Host "`n===============================
 📌 Instância: $instanceName
-==============================="
+===============================`n"
 
         # Coleta propriedades do SQL Server
         $query = @"
@@ -152,7 +170,7 @@ SELECT
         if (Test-Path $setupKey) {
             $regInfo = Get-ItemProperty -Path $setupKey
             Write-Host "📁 Caminho de Instalação: $($regInfo.SQLPath)"
-            Write-Host "📅 Data de Instalação : $($regInfo.InstallDate)"
+            Write-Host "📅 Data de Instalação : $($regInfo.InstallDate)`n"
         }
 
         # Serviço do Windows
@@ -161,9 +179,9 @@ SELECT
             $svc = Get-Service -Name $svcName -ErrorAction Stop
             Write-Host "⚙️ Serviço       : $($svc.DisplayName)"
             Write-Host "🔄 Status        : $($svc.Status)"
-            Write-Host "🕓 Inicialização : $($svc.StartType)"
+            Write-Host "🕓 Inicialização : $($svc.StartType)`n"
         } catch {
-            Write-Host "⚠️ Serviço $svcName não encontrado ou inacessível."
+            Write-Host "⚠️ Serviço $svcName não encontrado ou inacessível.`n"
         }
 
         # Tipo de edição
@@ -178,9 +196,9 @@ SELECT
             try {
                 $sizeBytes = (Get-ChildItem -Path $regInfo.SQLPath -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
                 $sizeGB = [Math]::Round($sizeBytes / 1GB, 2)
-                Write-Host "💽 Tamanho do Diretório SQL: $sizeGB GB"
+                Write-Host "💽 Tamanho do Diretório SQL: $sizeGB GB`n"
             } catch {
-                Write-Host '⚠️ Falha ao calcular o tamanho do diretório.'
+                Write-Host '⚠️ Falha ao calcular o tamanho do diretório.`n'
             }
         }
 
@@ -189,13 +207,13 @@ SELECT
             $mapKey = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
             $sqlKeyMap = Get-ItemProperty -Path $mapKey
             $keyName = $sqlKeyMap.$instance
-            if ($keyName) { Get-SqlServerProductKey -InstanceName $keyName } else { Write-Host "⚠️ Mapeamento de instância não encontrado para $instance." }
+            if ($keyName) { Get-SqlServerProductKey -InstanceName $keyName } else { Write-Host "⚠️ Mapeamento de instância não encontrado para $instance.`n" }
         } catch {
-            Write-Host "⚠️ Erro ao recuperar mapeamento de instância: $($_.Exception.Message)"
+            Write-Host "⚠️ Erro ao recuperar mapeamento de instância: $($_.Exception.Message)`n"
         }
     }
 
-    Write-Host "`n✅ Varredura concluída.`n"
+    Write-Host "✅ Varredura concluída.`n"
 }
 
 # Executa a varredura completa
