@@ -1,9 +1,12 @@
-# Fala galera, criei esse shell para ajudar , quem tiver o mesmo problema que eu
-# Que é levantar os historicos das instancias SQL, saber a chave que foi utilizada (principal) e outras informações . 
-# Como essa é a primeira versão , aos poucos irei icrementar mais informações para serem apresentadas. 
+# Fala galera, criei esse shell para ajudar quem tiver o mesmo problema que eu
+# Que é levantar os históricos das instâncias SQL, saber a chave utilizada (principal) e outras informações.
+# Como esta é a primeira versão, aos poucos irei incrementar mais informações para serem apresentadas.
 
 # Desenvolvido : Fabio Henrique da Silva
-# LInkdien: https://www.linkedin.com/in/fabio-henriques/
+# LinkedIn   : https://www.linkedin.com/in/fabio-henriques/
+
+# Liberando a execução , em algumas S.O esta bloqueado. 
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 # Verifica e instala módulo SqlServer
 if (-not (Get-Module -ListAvailable -Name SqlServer)) {
@@ -25,16 +28,60 @@ try {
     return
 }
 
-function GetSqlServerProductKey {
+# Função para coletar informações de hardware do servidor
+function Get-HardwareInfo {
+    Write-Host "🖥️ Informações de Hardware do Servidor`n"
+
+    # Sistema Operacional
+    $os = Get-CimInstance Win32_OperatingSystem
+    $installDateRaw = $os.InstallDate
+    try {
+        $installDate = [System.Management.ManagementDateTimeConverter]::ToDateTime($installDateRaw)
+    } catch {
+        $installDate = $installDateRaw
+    }
+    Write-Host "🛡️ SO           : $($os.Caption) (Versão $($os.Version)) - Instalado em: $installDate"
+
+    # CPU
+    $cpus = Get-CimInstance Win32_Processor
+    foreach ($cpu in $cpus) {
+        Write-Host "🧠 CPU          : $($cpu.Name) - Cores: $($cpu.NumberOfCores) - Threads: $($cpu.NumberOfLogicalProcessors) - Clock: $($cpu.MaxClockSpeed) MHz"
+    }
+
+    # Memória Física
+    $cs = Get-CimInstance Win32_ComputerSystem
+    $totalMemGB = [Math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
+    Write-Host "💾 Memória Total: $totalMemGB GB"
+
+    # Discos (DriveType 3 = Discos Fixos)
+    $drives = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
+    foreach ($d in $drives) {
+        $sizeGB      = [Math]::Round($d.Size / 1GB, 2)
+        $freeGB      = [Math]::Round($d.FreeSpace / 1GB, 2)
+        $percentFree = [Math]::Round(($d.FreeSpace / $d.Size) * 100, 2)
+        Write-Host "🗄️ Disco $($d.DeviceID): $freeGB GB livre de $sizeGB GB ($percentFree% livre)"
+    }
+
+    # Placas de Rede
+    $nics = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled }
+    foreach ($nic in $nics) {
+        Write-Host "🌐 NIC          : $($nic.Description) - IPs: $($nic.IPAddress -join ', ')"
+    }
+
+    Write-Host ""  # Linha em branco final
+}
+
+# Função para decodificar a chave de produto do SQL Server
+function Get-SqlServerProductKey {
     param ([string]$InstanceName)
 
-    $localmachine = [Microsoft.Win32.RegistryHive]::LocalMachine
-    $defaultview  = [Microsoft.Win32.RegistryView]::Default
-    $reg           = [Microsoft.Win32.RegistryKey]::OpenBaseKey($localmachine, $defaultview)
+    $localMachine = [Microsoft.Win32.RegistryHive]::LocalMachine
+    $view         = [Microsoft.Win32.RegistryView]::Default
+    $reg          = [Microsoft.Win32.RegistryKey]::OpenBaseKey($localMachine, $view)
+    $keyPath      = "SOFTWARE\Microsoft\Microsoft SQL Server\$InstanceName\Setup"
 
-    $key = "SOFTWARE\\Microsoft\\Microsoft SQL Server\\$InstanceName\\Setup"
     try {
-        $encodedData = $reg.OpenSubKey($key).GetValue("DigitalProductID")
+        $encodedData = $reg.OpenSubKey($keyPath).GetValue("DigitalProductID")
         $reg.Close()
 
         if (-not $encodedData) {
@@ -42,124 +89,114 @@ function GetSqlServerProductKey {
             return
         }
 
-        $binArray    = $encodedData[0..66]
-        $charsArray  = "B","C","D","F","G","H","J","K","M","P","Q","R","T","V","W","X","Y","2","3","4","6","7","8","9"
-        $productKey  = ""
+        $binArray   = $encodedData[0..66]
+        $charsArray = "B","C","D","F","G","H","J","K","M","P","Q","R","T","V","W","X","Y","2","3","4","6","7","8","9"
+        $productKey = ""
 
         for ($i = 24; $i -ge 0; $i--) {
             $k = 0
             for ($j = 14; $j -ge 0; $j--) {
-                $k = $k * 256 -bxor $binArray[$j]
+                $k = ($k * 256) -bxor $binArray[$j]
                 $binArray[$j] = [math]::truncate($k / 24)
-                $k = $k % 24
+                $k %= 24
             }
             $productKey = $charsArray[$k] + $productKey
-            if (($i % 5 -eq 0) -and ($i -ne 0)) {
-                $productKey = "-" + $productKey
-            }
+            if (($i % 5 -eq 0) -and ($i -ne 0)) { $productKey = "-" + $productKey }
         }
 
         Write-Host "🔑 Chave do Produto: $productKey"
     } catch {
-        Write-Host "⚠️ Erro ao acessar o registro ou processar a chave para $InstanceName"
+        Write-Host "⚠️ Erro ao decodificar a chave para ${InstanceName}: $($_.Exception.Message)"
     }
 }
 
+# Função principal para coletar informações de todas as instâncias SQL Server
 function Get-AllSQLServerInfo {
     Write-Host "🔍 Iniciando varredura de instâncias SQL Server instaladas...`n"
 
-    $instances = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server' |
-                 Select-Object -ExpandProperty InstalledInstances
-
+    $instances = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server').InstalledInstances
     if (-not $instances) {
         Write-Host "❌ Nenhuma instância SQL Server encontrada neste servidor."
         return
     }
 
     foreach ($instance in $instances) {
-        $instanceName = if ($instance -eq "MSSQLSERVER") { "localhost" } else { "localhost\$instance" }
-        Write-Host "`n==============================="
-        Write-Host "📌 Instância: $instanceName"
-        Write-Host "==============================="
+        $instanceName = if ($instance -eq 'MSSQLSERVER') { 'localhost' } else { "localhost\$instance" }
+        Write-Host "`n===============================
+📌 Instância: $instanceName
+==============================="
 
+        # Coleta propriedades do SQL Server
         $query = @"
 SELECT
-    SERVERPROPERTY('MachineName')            AS MachineName,
-    SERVERPROPERTY('ServerName')             AS ServerName,
-    SERVERPROPERTY('InstanceName')           AS InstanceName,
-    SERVERPROPERTY('Edition')                AS Edition,
-    SERVERPROPERTY('ProductVersion')         AS ProductVersion,
-    SERVERPROPERTY('ProductLevel')           AS ProductLevel,
+    SERVERPROPERTY('MachineName') AS MachineName,
+    SERVERPROPERTY('ServerName') AS ServerName,
+    SERVERPROPERTY('InstanceName') AS InstanceName,
+    SERVERPROPERTY('Edition') AS Edition,
+    SERVERPROPERTY('ProductVersion') AS ProductVersion,
+    SERVERPROPERTY('ProductLevel') AS ProductLevel,
     SERVERPROPERTY('IsIntegratedSecurityOnly') AS IsIntegratedSecurityOnly
 "@
 
         try {
-            $result = Invoke-Sqlcmd `
-                -ServerInstance         $instanceName `
-                -Query                  $query `
-                -TrustServerCertificate `
-                -ErrorAction            Stop
-
-            $result | Format-List
+            $sqlInfo = Invoke-Sqlcmd -ServerInstance $instanceName -Query $query -TrustServerCertificate -ErrorAction Stop
+            $sqlInfo | Format-List
         } catch {
             Write-Host ("❌ Erro ao conectar à instância {0}: {1}" -f $instanceName, $_.Exception.Message)
             continue
         }
 
-        # Registro de instalação
-        $setupKeyPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instance\Setup"
-        if (Test-Path $setupKeyPath) {
-            $regInfo = Get-ItemProperty -Path $setupKeyPath
+        # Informações do registro de instalação
+        $setupKey = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instance\Setup"
+        if (Test-Path $setupKey) {
+            $regInfo = Get-ItemProperty -Path $setupKey
             Write-Host "📁 Caminho de Instalação: $($regInfo.SQLPath)"
             Write-Host "📅 Data de Instalação : $($regInfo.InstallDate)"
         }
 
-        # Serviço Windows
-        $serviceName = if ($instance -eq "MSSQLSERVER") { "MSSQLSERVER" } else { "MSSQL`$$instance" }
+        # Serviço do Windows
+        $svcName = if ($instance -eq 'MSSQLSERVER') { 'MSSQLSERVER' } else { "MSSQL`$$instance" }
         try {
-            $service = Get-Service -Name $serviceName -ErrorAction Stop
-            Write-Host "⚙️ Serviço       : $($service.DisplayName)"
-            Write-Host "🔄 Status        : $($service.Status)"
-            Write-Host "🕓 Inicialização : $($service.StartType)"
+            $svc = Get-Service -Name $svcName -ErrorAction Stop
+            Write-Host "⚙️ Serviço       : $($svc.DisplayName)"
+            Write-Host "🔄 Status        : $($svc.Status)"
+            Write-Host "🕓 Inicialização : $($svc.StartType)"
         } catch {
-            Write-Host "⚠️ Serviço $serviceName não encontrado ou inacessível."
+            Write-Host "⚠️ Serviço $svcName não encontrado ou inacessível."
         }
 
-        # Edição
-        switch ($result.Edition) {
-            "Express Edition"    { Write-Host "🆓 Edição gratuita — não requer ativação." }
-            "Developer Edition"  { Write-Host "🧪 Edição para desenvolvimento — sem expiração." }
-            default              { Write-Host "✅ Edição comercial — verifique o contrato de licença." }
+        # Tipo de edição
+        switch ($sqlInfo.Edition) {
+            'Express Edition'   { Write-Host '🆓 Edição gratuita — não requer ativação.' }
+            'Developer Edition' { Write-Host '🧪 Edição para desenvolvimento — sem expiração.' }
+            default             { Write-Host '✅ Edição comercial — verifique o contrato de licença.' }
         }
 
         # Tamanho do diretório SQL
         if ($regInfo.SQLPath -and (Test-Path $regInfo.SQLPath)) {
             try {
-                $size   = (Get-ChildItem -Recurse -Path $regInfo.SQLPath -ErrorAction SilentlyContinue |
-                           Measure-Object -Property Length -Sum).Sum
-                $sizeGB = [Math]::Round($size / 1GB, 2)
-                Write-Host "💽 Tamanho Aproximado do Diretório SQL: $sizeGB GB"
+                $sizeBytes = (Get-ChildItem -Path $regInfo.SQLPath -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+                $sizeGB = [Math]::Round($sizeBytes / 1GB, 2)
+                Write-Host "💽 Tamanho do Diretório SQL: $sizeGB GB"
             } catch {
-                Write-Host "⚠️ Falha ao calcular o tamanho do diretório."
+                Write-Host '⚠️ Falha ao calcular o tamanho do diretório.'
             }
         }
 
-        # Decodifica a chave do produto
+        # Decodifica chave de produto
         try {
-            $sqlKeyMap = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
-            $keyName   = $sqlKeyMap."$instance"
-            if ($keyName) {
-                GetSqlServerProductKey -InstanceName $keyName
-            } else {
-                Write-Host "⚠️ Registro de mapeamento de instância não encontrado para $instance."
-            }
+            $mapKey = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
+            $sqlKeyMap = Get-ItemProperty -Path $mapKey
+            $keyName = $sqlKeyMap.$instance
+            if ($keyName) { Get-SqlServerProductKey -InstanceName $keyName } else { Write-Host "⚠️ Mapeamento de instância não encontrado para $instance." }
         } catch {
-            Write-Host "⚠️ Erro ao recuperar nome de registro para $instance."
+            Write-Host "⚠️ Erro ao recuperar mapeamento de instância: $($_.Exception.Message)"
         }
     }
 
-    Write-Host "`n✅ Varredura concluída."
+    Write-Host "`n✅ Varredura concluída.`n"
 }
 
-# Executa a varredura
+# Executa a varredura completa
+Get-HardwareInfo
 Get-AllSQLServerInfo
