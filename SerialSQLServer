@@ -1,3 +1,10 @@
+# Fala galera, criei esse shell para ajudar , quem tiver o mesmo problema que eu
+# Que é levantar os historicos das instancias SQL, saber a chave que foi utilizada (principal) e outras informações . 
+# Como essa é a primeira versão , aos poucos irei icrementar mais informações para serem apresentadas. 
+
+# Desenvolvido : Fabio Henrique da Silva
+# LInkdien: https://www.linkedin.com/in/fabio-henriques/
+
 # Verifica e instala módulo SqlServer
 if (-not (Get-Module -ListAvailable -Name SqlServer)) {
     Write-Host "📦 Módulo 'SqlServer' não encontrado. Instalando..."
