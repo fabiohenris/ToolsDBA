@@ -5,7 +5,7 @@
 # Desenvolvido : Fabio Henrique da Silva
 # LinkedIn   : https://www.linkedin.com/in/fabio-henriques/
 
-# Libera temporariamente a execução de scripts para instância
+#Libera a execução temporariamente para a sessão.
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 # Verifica e instala módulo SqlServer
@@ -154,7 +154,8 @@ SELECT
     SERVERPROPERTY('Edition') AS Edition,
     SERVERPROPERTY('ProductVersion') AS ProductVersion,
     SERVERPROPERTY('ProductLevel') AS ProductLevel,
-    SERVERPROPERTY('IsIntegratedSecurityOnly') AS IsIntegratedSecurityOnly
+    SERVERPROPERTY('IsIntegratedSecurityOnly') AS IsIntegratedSecurityOnly,
+    @@VERSION as 'VersionSQL'
 "@
 
         try {
