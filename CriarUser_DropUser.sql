@@ -20,6 +20,20 @@ go
 --Add Role
 EXEC sp_addrolemember 'db_datareader', [user/group];
 
+--| Role                | Descrição                                                                     |
+--| ------------------- | ----------------------------------------------------------------------------- |
+--| `db_owner`          | Acesso total à base de dados, inclusive gerenciamento de segurança e objetos. |
+--| `db_accessadmin`    | Pode adicionar ou remover usuários do banco.                                  |
+--| `db_securityadmin`  | Pode gerenciar permissões e roles no banco.                                   |
+--| `db_ddladmin`       | Pode criar, alterar ou remover objetos do banco (tabelas, views, procs etc).  |
+--| `db_backupoperator` | Pode realizar backups da base de dados.                                       |
+--| `db_datareader`     | Pode executar SELECT em todas as tabelas e views.                             |
+--| `db_datawriter`     | Pode executar INSERT, UPDATE e DELETE em todas as tabelas e views.            |
+--| `db_denydatareader` | **Nega** permissão de leitura (SELECT) em todas as tabelas/views.             |
+--| `db_denydatawriter` | **Nega** permissão de escrita (INSERT, UPDATE, DELETE).                       |
+---------------------------------------------------------------------------------------------------------
+
+
 -- Add Role Servidor
 ALTER SERVER ROLE sysadmin ADD MEMBER [user/group];
 
