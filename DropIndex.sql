@@ -1,7 +1,9 @@
--- Fabio Henrique da SIlva
--- Query para identificar quando o index foi utilizado e gera a exclusão
--- 18.08.2025
--- http://linkedin.com/in/fabio-henriques
+/*
+********************************************************
+Autor :  Fabio Henrique da Silva
+linkedin: https://www.linkedin.com/in/fabio-henriques/
+Assunto: Query para identidicar quando um Index não esta sendo mais utilizado, gerando o comando para exclusão do mesmo .
+*/
 
 
 ----------------------------------------------------------
