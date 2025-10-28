@@ -1,6 +1,12 @@
----Query basica para criação de usuarios.
--- Sei que as vezes bate a duvida no JR, PL e SR . Com a correria acabamos esquecendo algumas coisas basicas
--- Segue aqui minha query que sempre utilizo , mas lembrem-se , pratiquem para decorar. 
+
+/*
+********************************************************
+Autor :  Fabio Henrique da Silva
+linkedin: https://www.linkedin.com/in/fabio-henriques/
+Assunto: Sei que as vezes bate a duvida no JR, PL e SR . Com a correria acabamos esquecendo algumas coisas basicas
+         Segue aqui minha query que sempre utilizo , mas lembrem-se , pratiquem para decorar. 
+*/
+
 
 --Criando usuario AD
 use master
