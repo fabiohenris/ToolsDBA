@@ -7,10 +7,73 @@ Assunto: Scrip para auditoria de Acessos , usuarios de instancias VS Usuarios de
 Blog que usei para referencia: https://dirceuresende.com/blog/sql-server-como-saber-a-data-do-ultimo-login-de-um-usuario/
 */
 
+/*
+========================================================================
+   PARTE 1: Coleta de Permissões de Bancos de Dados
+========================================================================
+*/
+
+-- 0. Garante que a tabela temporária de coleta não exista
+IF OBJECT_ID('tempdb..#DBAcessos') IS NOT NULL
+    DROP TABLE #DBAcessos;
+
+-- Cria a tabela para armazenar os resultados
+CREATE TABLE #DBAcessos (
+    server_principal_sid VARBINARY(85),    -- SID do Login (para o JOIN)
+    database_name NVARCHAR(128),          -- Nome do Banco
+    database_principal_name NVARCHAR(128),-- Nome do Usuário (dentro do banco)
+    database_roles NVARCHAR(MAX)          -- Roles (ex: db_owner, db_datareader)
+);
+
+-- Declara o SQL dinâmico que será executado em cada banco
+DECLARE @db_perm_sql NVARCHAR(MAX);
+SET @db_perm_sql = N'
+    USE [?]; -- O placeholder [?] é substituído pelo nome de cada banco
+    
+    -- Insere os mapeamentos de usuário e suas roles de banco de dados
+    INSERT INTO #DBAcessos (server_principal_sid, database_name, database_principal_name, database_roles)
+    SELECT
+        dp.sid AS server_principal_sid,
+        DB_NAME() AS database_name,
+        dp.name AS database_principal_name,
+        ISNULL(STRING_AGG(dr.name, '', ''), ''public'') AS database_roles
+        
+    FROM
+        sys.database_principals AS dp
+    -- Junta com as roles do banco
+    LEFT JOIN
+        sys.database_role_members AS drm ON dp.principal_id = drm.member_principal_id
+    LEFT JOIN
+        sys.database_principals AS dr ON drm.role_principal_id = dr.principal_id
+    WHERE
+        dp.type IN (''S'', ''U'', ''G'') -- Usuários SQL, Windows e Grupos
+        AND dp.sid IS NOT NULL
+        AND dp.sid NOT IN (0x00, 0x01) -- Exclui ''dbo'' e ''guest'' genéricos
+    GROUP BY
+        dp.sid, dp.name;
+';
+
+-- Executo o SQL dinâmico para cada banco de dados na instância
+-- O try/catch ignora bancos de dados offline, inacessíveis, etc.
+BEGIN TRY
+    EXEC sp_msforeachdb @db_perm_sql;
+END TRY
+BEGIN CATCH
+    PRINT N'Aviso: Alguns bancos de dados não puderam ser consultados (ex: offline ou em restauração).';
+END CATCH;
+
+
+/*
+========================================================================
+   PARTE 2: Query de Auditoria Principal (Modificada)
+========================================================================
+*/
+
 -- 1. Coleta todos os logins de usuário (SQL, Windows e Grupos)
 WITH ServerPrincipals AS (
     SELECT
         principal_id,
+        sid, -- Adicionado SID para o JOIN com a tabela de permissões
         name AS Nome,
         type,
         type_desc,
@@ -27,7 +90,7 @@ WITH ServerPrincipals AS (
         AND name NOT LIKE '##%' -- Exclui contas de sistema internas
 ),
 
- -- 2. Encontra a hora de login das sessões *atualmente ativas*
+-- 2. Encontra a hora de login das sessões *atualmente ativas*
 ActiveSessions AS (
     SELECT
         login_name,
@@ -64,38 +127,39 @@ ServerPermissions AS (
         grantee_principal_id
 ),
 
--- 5. Agrega informações da hash senha.
-Cripto as (
-SELECT name,
-       CASE 
-         WHEN password_hash IS NULL THEN 'Sem senha (Windows/externo)'
-         WHEN SUBSTRING(password_hash,1,1) = 0x02 THEN 'Formato v2 (SHA-512 style - SQL Server <= 2022)'
-         WHEN SUBSTRING(password_hash,1,1) = 0x03 THEN 'Formato v3 (PBKDF2 / RFC2898 - SQL 2025+)'
-         ELSE 'Formato desconhecido / legacy'
-       END AS hash_formato,
-       DATALENGTH(password_hash) AS hash_bytes
-FROM sys.sql_logins
+-- 5. [NOVA CTE] Agrega os resultados da tabela temporária #DBAcessos
+DatabaseAccess AS (
+    SELECT
+        server_principal_sid,
+        STRING_AGG(
+            CONCAT(database_name, ' (User: ', database_principal_name, ', Roles: ', database_roles, ')'),
+            
+            '; ' -- Separador entre bancos
+        ) WITHIN GROUP (ORDER BY database_name) AS [Acesso_Bancos_de_Dados]
+    FROM
+        #DBAcessos
+    GROUP BY
+        server_principal_sid
 )
-
 
 -- 6. Junta todas as informações (Final)
 SELECT
     p.Nome,
     CASE
         WHEN p.type = 'S' THEN CONVERT(DATETIME, LOGINPROPERTY(p.Nome, 'LastLoginTime'))
-        ELSE s.UltimoAcessoSessaoAtiva -- Não substitui o audit, eu vi no blog do Dirceu. Sendo assim melhor implementar.
+        ELSE s.UltimoAcessoSessaoAtiva
     END AS [Ultimo Acesso (Aproximado)],
-    ISNULL(r.[Tipo de Role], 'public') AS [Tipo de Role],
-    ISNULL(pe.Permissoes, 'Nenhuma permissão explícita no servidor') AS Permissoes,
+    ISNULL(r.[Tipo de Role], 'public') AS [Tipo de Role (Servidor)],
+    ISNULL(pe.Permissoes, 'Nenhuma permissão explícita no servidor') AS [Permissoes (Servidor)],
+    ISNULL(da.[Acesso_Bancos_de_Dados], 'Nenhum acesso explícito a bancos') AS [Acesso_Bancos_de_Dados],
     p.[Usuario de AD ou de Instancia],
-     CASE 
-         WHEN password_hash IS NULL THEN 'Sem senha (Windows/externo)'
-         WHEN SUBSTRING(password_hash,1,1) = 0x02 THEN 'Formato v2 (SHA-512 style - SQL Server <= 2022)'
-         WHEN SUBSTRING(password_hash,1,1) = 0x03 THEN 'Formato v3 (PBKDF2 / RFC2898 - SQL 2025+)'
-         ELSE 'Formato desconhecido / legacy'
-       END AS hash_formato,
+    CASE 
+        WHEN sl.password_hash IS NULL THEN 'Sem senha (Windows/externo)'
+        WHEN SUBSTRING(sl.password_hash,1,1) = 0x02 THEN 'Formato v2 (SHA-512)'
+        WHEN SUBSTRING(sl.password_hash,1,1) = 0x03 THEN 'Formato v3 (PBKDF2)'
+        ELSE 'Formato desconhecido / legacy'
+    END AS [Formato_Hash_Senha],
     sl.password_hash AS [Senha_Criptografada_Hash]
-
 FROM
     ServerPrincipals AS p
 LEFT JOIN
@@ -105,8 +169,18 @@ LEFT JOIN
 LEFT JOIN
     ServerPermissions AS pe ON p.principal_id = pe.grantee_principal_id
 LEFT JOIN
-    Cripto AS cp ON p.nome = cp.name
+    DatabaseAccess AS da ON p.sid = da.server_principal_sid
 LEFT JOIN
     sys.sql_logins AS sl ON p.principal_id = sl.principal_id
 ORDER BY
     p.Nome;
+
+
+/*
+========================================================================
+   PARTE 3: Limpeza
+   Remove a tabela temporária global.
+========================================================================
+*/
+DROP TABLE #DBAcessos;
+
