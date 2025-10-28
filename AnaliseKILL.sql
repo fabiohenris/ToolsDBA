@@ -1,4 +1,10 @@
--- Analise de KILL dentro do banco de dados. Atraves do ERROR Log.
+/*
+********************************************************
+Autor :  Fabio Henrique da Silva
+linkedin: https://www.linkedin.com/in/fabio-henriques/
+Assunto: Scrip para analise de KILL dentro do banco de dados
+
+*/
 
 -- últimas 6h procurando por eventos de KILL no Error Log
 DECLARE @desde DATETIME = DATEADD(HOUR,-24,GETDATE());
