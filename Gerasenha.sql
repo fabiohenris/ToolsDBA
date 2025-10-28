@@ -1,7 +1,9 @@
--- Fabio Henrique da Silva
--- Gerador de senha.
--- Data 18.08.2025
--- http://linkedin.com/in/fabio-henriques
+/*
+********************************************************
+Autor :  Fabio Henrique da Silva
+linkedin: https://www.linkedin.com/in/fabio-henriques/
+Assunto: Gerador de senha dinamico  
+*/
 
 DECLARE @Password NVARCHAR(100) = '';
 
