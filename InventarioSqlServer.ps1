@@ -1,9 +1,9 @@
-# Fala galera, criei esse shell para ajudar quem tiver o mesmo problema que eu
-# Que é levantar os históricos das instâncias SQL, saber a chave utilizada (principal) e outras informações.
-# Como esta é a primeira versão, aos poucos irei incrementar mais informações para serem apresentadas.
+# Autor :  Fabio Henrique da Silva
+# linkedin: https://www.linkedin.com/in/fabio-henriques/
+# Assunto: Fala galera, criei esse shell para ajudar quem tiver o mesmo problema que eu
+#        Que é levantar os históricos das instâncias SQL, saber a chave utilizada (principal) e outras informações.
+#        Como esta é a primeira versão, aos poucos irei incrementar mais informações para serem apresentadas.
 
-# Desenvolvido : Fabio Henrique da Silva
-# LinkedIn   : https://www.linkedin.com/in/fabio-henriques/
 
 #Libera a execução temporariamente para a sessão.
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
